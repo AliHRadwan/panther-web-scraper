@@ -18,8 +18,8 @@ This tool features a dynamic custom Artisan command that accepts any venue page 
 
 **1. Clone the repository and navigate to the directory**
 ```bash
-git clone git@github.com:AliHRadwan/panther-web-scraper-v2.git
-cd panther-web-scraper-v2
+git clone git@github.com:AliHRadwan/panther-web-scraper.git
+cd panther-web-scraper
 ```
 
 **2. Install dependencies**
@@ -50,7 +50,7 @@ php artisan scrape:more-cravings "https://www.morecravings.com/en/venues/brasser
 The scraped data is automatically saved to the storage/app/ directory as a CSV file.
 The filename is dynamically generated using the venue name and a timestamp to prevent overwriting.
 ```bash
-panther-web-scraper-v2/storage/app/[VENUE_NAME]_[TIMESTAMP].csv
+panther-web-scraper/storage/app/[VENUE_NAME]_[TIMESTAMP].csv
 ```
 
 ```bash
@@ -76,8 +76,8 @@ The scraped data is automatically saved to the storage/app/ directory as a CSV f
 The venues' URLs list is stored to a CSV file with the name venue_urls_list_[timestamp].csv
 The scraped data of all venues are stored to a CSV file with the name MASTER_VENUE_DATA_[timestamp].csv
 ```bash
-panther-web-scraper-v2/storage/app/venue_urls_list_[timestamp].csv.csv
-panther-web-scraper-v2/storage/app/MASTER_VENUE_DATA_[timestamp].csv
+panther-web-scraper/storage/app/venue_urls_list_[timestamp].csv.csv
+panther-web-scraper/storage/app/MASTER_VENUE_DATA_[timestamp].csv
 ```
 
 ```bash
