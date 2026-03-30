@@ -8,11 +8,21 @@ class WebScrapingService
 {
     public function scrapeSpa(string $url)
     {
-        $client = Client::createChromeClient(base_path('drivers/chromedriver.exe'));
+        // 1. Automatically determine the correct extension based on the Operating System
+        $extension = PHP_OS_FAMILY === 'Windows' ? '.exe' : '';
+        $driverPath = base_path("drivers/chromedriver{$extension}");
+
+        // 2. Format the directory separators specifically for Windows if necessary
+        if (PHP_OS_FAMILY === 'Windows') {
+            $driverPath = str_replace('/', '\\', $driverPath);
+        }
+
+        // 3. Initialize the client
+        $client = Client::createChromeClient($driverPath);
 
         try {
             $client->request('GET', $url);
-            
+
             // Wait for the main content
             $client->waitFor('#main-content', 5);
 
@@ -53,7 +63,7 @@ class WebScrapingService
             if (isset($restaurantData->servesCuisine)) {
                 $tags = is_array($restaurantData->servesCuisine) ? $restaurantData->servesCuisine : [$restaurantData->servesCuisine];
             }
-            
+
             // Regex to find "Casual" even when wrapped in messy Next.js escaped quotes like \"en\":\"Casual\"
             if (preg_match('/outlets_dressCode_name.*?en[\\\\":]+([^\\\\"]+)/i', $rawHtml, $matches)) {
                 $tags[] = $matches[1];
@@ -89,7 +99,6 @@ class WebScrapingService
                     'menu'          => $menuImage
                 ]
             ];
-
         } catch (\Exception $e) {
             return (object)[
                 'status' => 'error',
