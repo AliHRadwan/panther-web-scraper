@@ -6,6 +6,53 @@ use Symfony\Component\Panther\Client;
 
 class WebScrapingService
 {
+    /**
+     * Scrapes the main listing page to get all individual venue URLs
+     */
+    public function getAllVenueUrls(string $listingUrl = 'https://www.morecravings.com/en/venues')
+    {
+        $extension = PHP_OS_FAMILY === 'Windows' ? '.exe' : '';
+        $driverPath = base_path("drivers/chromedriver{$extension}");
+        if (PHP_OS_FAMILY === 'Windows') {
+            $driverPath = str_replace('/', '\\', $driverPath);
+        }
+
+        $client = Client::createChromeClient($driverPath, [
+            '--headless=new',
+            '--disable-gpu',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+        ]);
+
+        try {
+            $client->request('GET', $listingUrl);
+            $client->waitFor('#main-content', 10);
+
+            // Scroll down a few times to trigger any lazy-loaded Next.js elements
+            for ($i = 0; $i < 3; $i++) {
+                $client->executeScript("window.scrollTo(0, document.body.scrollHeight);");
+                sleep(1); 
+            }
+
+            // Extract all unique links that point to a specific venue
+            $payload = $client->executeScript("
+                let links = Array.from(document.querySelectorAll('a[href^=\"/en/venues/\"]'));
+                let urls = links.map(a => a.href).filter(href => href.length > 'https://www.morecravings.com/en/venues/'.length);
+                return JSON.stringify([...new Set(urls)]);
+            ");
+
+            return json_decode($payload);
+
+        } catch (\Exception $e) {
+            return [];
+        } finally {
+            $client->quit();
+        }
+    }
+
+    /**
+     * Your existing method that scrapes a single venue (Keep this exactly as we perfected it earlier)
+     */
     public function scrapeSpa(string $url)
     {
         // 1. Automatically determine the correct extension based on the Operating System
@@ -18,7 +65,12 @@ class WebScrapingService
         }
 
         // 3. Initialize the client
-        $client = Client::createChromeClient($driverPath);
+        $client = Client::createChromeClient($driverPath, [
+            '--headless=new',
+            '--disable-gpu',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+        ]);
 
         try {
             $client->request('GET', $url);
