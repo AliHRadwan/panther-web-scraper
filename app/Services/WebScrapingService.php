@@ -17,7 +17,7 @@ class WebScrapingService
             $driverPath = str_replace('/', '\\', $driverPath);
         }
 
-        $client = Client::createChromeClient($driverPath, [
+        $client = \Symfony\Component\Panther\Client::createChromeClient($driverPath, [
             '--headless=new',
             '--disable-gpu',
             '--no-sandbox',
@@ -28,16 +28,50 @@ class WebScrapingService
             $client->request('GET', $listingUrl);
             $client->waitFor('#main-content', 10);
 
-            // Scroll down a few times to trigger any lazy-loaded Next.js elements
-            for ($i = 0; $i < 3; $i++) {
+            // --- THE PAGINATION FIX ---
+            $keepClicking = true;
+            $clicks = 0;
+            $maxClicks = 100; // Safety limit: Prevents an infinite loop if the site bugs out
+
+            while ($keepClicking && $clicks < $maxClicks) {
+                // 1. Scroll to the bottom to ensure the button is visible
                 $client->executeScript("window.scrollTo(0, document.body.scrollHeight);");
                 sleep(1); 
+
+                // 2. Ask Chrome to find and click the "Show More" button
+                $clicked = $client->executeScript("
+                    // Look for any button or link containing 'Show More' or 'Load More'
+                    let elements = Array.from(document.querySelectorAll('button, a'));
+                    let showMoreBtn = elements.find(el => {
+                        let text = el.innerText.toLowerCase().trim();
+                        return text === 'show more' || text === 'load more';
+                    });
+
+                    // If the button exists, is visible, and isn't disabled, click it!
+                    if (showMoreBtn && showMoreBtn.offsetParent !== null && !showMoreBtn.disabled) {
+                        showMoreBtn.click();
+                        return true;
+                    }
+                    return false;
+                ");
+
+                // 3. If we clicked it, wait for the new venues to load. If not, we are done!
+                if ($clicked) {
+                    $clicks++;
+                    // Give the Next.js API 2 seconds to fetch the new batch of venues
+                    sleep(2); 
+                } else {
+                    $keepClicking = false;
+                }
             }
 
-            // Extract all unique links that point to a specific venue
+            // --- END PAGINATION FIX ---
+
+            // Now that ALL venues are loaded into the DOM, extract their URLs
             $payload = $client->executeScript("
                 let links = Array.from(document.querySelectorAll('a[href^=\"/en/venues/\"]'));
                 let urls = links.map(a => a.href).filter(href => href.length > 'https://www.morecravings.com/en/venues/'.length);
+                // Use Set to automatically remove any duplicate URLs
                 return JSON.stringify([...new Set(urls)]);
             ");
 
