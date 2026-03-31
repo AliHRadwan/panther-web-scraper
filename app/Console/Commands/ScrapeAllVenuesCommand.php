@@ -44,8 +44,8 @@ class ScrapeAllVenuesCommand extends Command
         $masterFile = fopen($masterFilePath, 'w');
         
         $headers = [
-            'Title', 'Image', 'Directions', 'Mobile', 'Email', 
-            'Website', 'About', 'Tags', 'Opening Hours', 'Menu Image'
+            'Title', 'Images', 'Directions', 'Mobile', 'Email', 
+            'Website', 'About', 'Tags', 'Opening Hours', 'Menu Items'
         ];
         fputcsv($masterFile, $headers);
 
@@ -85,7 +85,7 @@ class ScrapeAllVenuesCommand extends Command
                 // Compile Row Data
                 $csvRow = [
                     $data['title'] ?? 'N/A',
-                    $data['image'] ?? 'N/A',
+                    $data['images'] ?? 'N/A',
                     $data['directions'] ?? 'N/A',
                     $data['mobile'] ?? 'N/A',
                     $data['email'] ?? 'N/A',

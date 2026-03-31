@@ -7,7 +7,7 @@ use App\Services\WebScrapingService;
 
 class ScrapeMoreCravingsCommand extends Command
 {
-    protected $signature = 'scrape:more-cravings {url : The full URL of the More Cravings website page to scrape}';
+    protected $signature = 'scrape:this-venue {url : The full URL of the More Cravings website page to scrape}';
     protected $description = 'Scrapes the More Cravings website data from the SPA and exports it to a CSV file';
 
     public function handle(WebScrapingService $scraper)
@@ -56,7 +56,7 @@ class ScrapeMoreCravingsCommand extends Command
 
         $csvRow = [
             $data['title'] ?? 'N/A',
-            $data['image'] ?? 'N/A',
+            $data['images'] ?? 'N/A',
             $data['directions'] ?? 'N/A',
             $data['mobile'] ?? 'N/A',
             $data['email'] ?? 'N/A',
@@ -68,8 +68,8 @@ class ScrapeMoreCravingsCommand extends Command
         ];
 
         $headers = [
-            'Title', 'Image', 'Directions', 'Mobile', 'Email', 
-            'Website', 'About', 'Tags', 'Opening Hours', 'Menu Image'
+            'Title', 'Images', 'Directions', 'Mobile', 'Email', 
+            'Website', 'About', 'Tags', 'Opening Hours', 'Menu Items'
         ];
 
         $slug = basename(parse_url($url, PHP_URL_PATH));

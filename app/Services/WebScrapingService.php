@@ -17,7 +17,7 @@ class WebScrapingService
             $driverPath = str_replace('/', '\\', $driverPath);
         }
 
-        $client = \Symfony\Component\Panther\Client::createChromeClient($driverPath, [
+        $client = Client::createChromeClient($driverPath, [
             '--headless=new',
             '--disable-gpu',
             '--no-sandbox',
@@ -89,17 +89,13 @@ class WebScrapingService
      */
     public function scrapeSpa(string $url)
     {
-        // 1. Automatically determine the correct extension based on the Operating System
         $extension = PHP_OS_FAMILY === 'Windows' ? '.exe' : '';
         $driverPath = base_path("drivers/chromedriver{$extension}");
-
-        // 2. Format the directory separators specifically for Windows if necessary
         if (PHP_OS_FAMILY === 'Windows') {
             $driverPath = str_replace('/', '\\', $driverPath);
         }
 
-        // 3. Initialize the client
-        $client = Client::createChromeClient($driverPath, [
+        $client = \Symfony\Component\Panther\Client::createChromeClient($driverPath, [
             '--headless=new',
             '--disable-gpu',
             '--no-sandbox',
@@ -107,20 +103,28 @@ class WebScrapingService
         ]);
 
         try {
+            // ==========================================
+            // STEP 1: LOAD MAIN PAGE (YOUR EXACT CODE)
+            // ==========================================
             $client->request('GET', $url);
+            $client->waitFor('#main-content', 10);
 
-            // Wait for the main content
-            $client->waitFor('#main-content', 5);
+            // Scroll the main page to ensure the "Menu" button physically renders
+            $client->executeScript("window.scrollTo(0, document.body.scrollHeight / 2);");
+            sleep(1);
+            $client->executeScript("window.scrollTo(0, document.body.scrollHeight);");
+            sleep(2);
 
-            // Extract the data using Chrome's JS engine
             $payload = $client->executeScript("
                 let result = { 
                     schema: null, 
                     html: document.documentElement.innerHTML,
                     email: document.querySelector('a[href^=\"mailto:\"]') ? document.querySelector('a[href^=\"mailto:\"]').href.replace('mailto:', '') : null,
-                    mobile: document.querySelector('a[href^=\"tel:\"]') ? document.querySelector('a[href^=\"tel:\"]').href.replace('tel:', '') : null
+                    mobile: document.querySelector('a[href^=\"tel:\"]') ? document.querySelector('a[href^=\"tel:\"]').href.replace('tel:', '') : null,
+                    menuLink: null
                 };
 
+                // Find Schema
                 let scripts = document.querySelectorAll('script[type=\"application/ld+json\"]');
                 for (let script of scripts) {
                     try {
@@ -132,6 +136,18 @@ class WebScrapingService
                         }
                     } catch (e) {}
                 }
+
+                // Find Menu Link (Much more aggressive targeting)
+                let menuAnchor = document.querySelector('a[href*=\"/menu\"]');
+                if (!menuAnchor) {
+                    let allLinks = Array.from(document.querySelectorAll('a'));
+                    menuAnchor = allLinks.find(a => a.href && a.href.toLowerCase().includes('/menu/'));
+                }
+                
+                if (menuAnchor) {
+                    result.menuLink = menuAnchor.href; 
+                }
+
                 return JSON.stringify(result);
             ");
 
@@ -144,37 +160,163 @@ class WebScrapingService
             $restaurantData = $extractedData->schema;
             $rawHtml = $extractedData->html;
 
-            // 1. Tags: Combine Cuisines + Dress Code
+            // Formats
             $tags = [];
             if (isset($restaurantData->servesCuisine)) {
                 $tags = is_array($restaurantData->servesCuisine) ? $restaurantData->servesCuisine : [$restaurantData->servesCuisine];
             }
-
-            // Regex to find "Casual" even when wrapped in messy Next.js escaped quotes like \"en\":\"Casual\"
             if (preg_match('/outlets_dressCode_name.*?en[\\\\":]+([^\\\\"]+)/i', $rawHtml, $matches)) {
                 $tags[] = $matches[1];
             }
 
-            // 2. Menu Image: Bypass lazy-loading via Regex
-            $menuImage = null;
-            if (preg_match('/(https(?:%3A%2F%2F|:\/\/)[^"\'\\\\\s<>]+(?:Wide-Hor|menu)[^"\'\\\\\s<>&]*)/i', $rawHtml, $matches)) {
-                $menuImage = urldecode($matches[1]);
-            }
-
-            // 3. Directions: Generate it dynamically using the Schema Coordinates
             $directions = null;
             if (isset($restaurantData->geo->latitude) && isset($restaurantData->geo->longitude)) {
-                $lat = $restaurantData->geo->latitude;
-                $lng = $restaurantData->geo->longitude;
-                // Creates a standard Google Maps link
-                $directions = "https://www.google.com/maps/search/?api=1&query={$lat},{$lng}";
+                $directions = "https://www.google.com/maps/search/?api=1&query={$restaurantData->geo->latitude},{$restaurantData->geo->longitude}";
             }
+
+            // ==========================================
+            // STEP 2: LOAD MENU PAGE (YOUR EXACT CODE)
+            // ==========================================
+            $menuListFormatted = 'N/A (Menu link not found on main page)';
+            
+            if (!empty($extractedData->menuLink)) {
+                try {
+                    $client->request('GET', $extractedData->menuLink);
+                    sleep(2); 
+                    
+                    // Scroll menu page to fetch food items
+                    $client->executeScript("window.scrollTo(0, document.body.scrollHeight);");
+                    sleep(3); 
+
+                    $menuListFormatted = $client->executeScript("
+                        document.querySelectorAll('header, footer, nav, [class*=\"header\" i], [class*=\"footer\" i], [class*=\"nav\" i], [class*=\"banner\" i]').forEach(el => el.remove());
+                        
+                        let main = document.querySelector('main') || document.body;
+                        let items = [];
+                        
+                        let menuNodes = document.querySelectorAll('[class*=\"menuItem\" i], [class*=\"MenuItem\" i], .menu-item, [class*=\"accordionContent\" i] > div');
+                        
+                        if (menuNodes.length > 0) {
+                            menuNodes.forEach(node => {
+                                let htmlContent = node.innerHTML;
+                                let spacedHtml = htmlContent.replace(/<\\/(div|p|h[1-6]|li|strong|span)>/gi, ' |SEP| ');
+                                let tempDiv = document.createElement('div');
+                                tempDiv.innerHTML = spacedHtml;
+                                
+                                let parts = tempDiv.textContent.split('|SEP|').map(s => s.trim()).filter(s => s.length > 0 && s !== '-');
+                                let text = parts.join(' - ');
+
+                                if (text.length > 5 && /[0-9]/.test(text) && !text.toLowerCase().includes('terms of use')) {
+                                    if (!items.includes(text)) items.push(text);
+                                }
+                            });
+                        }
+
+                        if (items.length === 0) {
+                            let allElements = main.querySelectorAll('*');
+                            allElements.forEach(el => {
+                                if (el.children.length === 0 && (el.innerText.includes('GEL') || el.innerText.includes('AED') || el.innerText.includes('USD'))) {
+                                    let container = el.parentElement.parentElement;
+                                    if (container && container.innerText.length < 300) {
+                                        let htmlContent = container.innerHTML;
+                                        let spacedHtml = htmlContent.replace(/<\\/(div|p|h[1-6]|li|strong|span)>/gi, ' |SEP| ');
+                                        let tempDiv = document.createElement('div');
+                                        tempDiv.innerHTML = spacedHtml;
+                                        let text = tempDiv.textContent.split('|SEP|').map(s => s.trim()).filter(s => s.length > 0).join(' - ');
+                                        
+                                        if (text.length > 5 && !items.includes(text)) items.push(text);
+                                    }
+                                }
+                            });
+                        }
+
+                        let pdfLink = document.querySelector('a[href$=\".pdf\" i]');
+                        let images = Array.from(main.querySelectorAll('img')).filter(img => 
+                            (img.alt && img.alt.toLowerCase().includes('menu')) || img.width > 200
+                        );
+
+                        if (items.length > 0) {
+                            return items.join(' | '); 
+                        } else if (pdfLink) {
+                            return 'PDF Menu: ' + pdfLink.href;
+                        } else if (images.length > 0) {
+                            let imageUrls = images.map(img => img.src).filter(src => !src.includes('data:image'));
+                            let cleanUrls = imageUrls.map(url => {
+                                try { return new URLSearchParams(url.split('?')[1]).get('url') || url; } catch(e) { return url; }
+                            });
+                            return 'Menu Image(s): ' + [...new Set(cleanUrls)].join(' | ');
+                        } else {
+                            return 'N/A (Menu page loaded, but no food items or images were found)';
+                        }
+                    ");
+
+                } catch (\Exception $menuException) {
+                    $menuListFormatted = 'Error loading menu: ' . $menuException->getMessage();
+                }
+            }
+
+            // ==========================================
+            // STEP 3: SURGICAL GALLERY IMAGE EXTRACTION
+            // ==========================================
+            $allImages = [];
+
+            // 1. Keep the main Hero Image as a baseline fallback
+            if (isset($restaurantData->image)) {
+                if (is_array($restaurantData->image)) {
+                    $allImages = array_merge($allImages, $restaurantData->image);
+                } else if (is_string($restaurantData->image)) {
+                    $allImages[] = $restaurantData->image;
+                }
+            }
+
+            // 2. Automatically generate the Gallery URL
+            $galleryLink = rtrim(explode('?', $url)[0], '/') . '/gallery';
+
+            try {
+                $client->request('GET', $galleryLink);
+                sleep(2); // Wait for the Schema to load
+
+                // Find the EXACT ImageGallery Schema you discovered
+                $galleryPayload = $client->executeScript("
+                    let galleryUrls = [];
+                    let scripts = document.querySelectorAll('script[type=\"application/ld+json\"]');
+                    
+                    for (let script of scripts) {
+                        try {
+                            let text = script.textContent || script.innerText || script.innerHTML;
+                            let data = JSON.parse(text);
+                            // This ensures we ONLY grab images strictly tied to this venue's gallery
+                            if (data['@type'] === 'ImageGallery' && data.image) {
+                                galleryUrls = Array.isArray(data.image) ? data.image : [data.image];
+                                break;
+                            }
+                        } catch (e) {}
+                    }
+                    return JSON.stringify(galleryUrls);
+                ");
+
+                $galleryImages = json_decode($galleryPayload, true);
+                if (is_array($galleryImages) && count($galleryImages) > 0) {
+                    $allImages = array_merge($allImages, $galleryImages);
+                }
+
+            } catch (\Exception $galleryException) {
+                // Silently skip if gallery fails, it will just output the main hero image
+            }
+
+            // Clean the URLs to remove exact duplicates and query parameters (like ?wid=1920)
+            $cleanImages = array_map(function($imgUrl) {
+                return explode('?', $imgUrl)[0];
+            }, $allImages);
+            $cleanImages = array_unique(array_filter($cleanImages));
+
+            $imagesString = !empty($cleanImages) ? implode(' | ', $cleanImages) : 'N/A';
 
             return (object)[
                 'status' => 'success',
                 'data' => [
                     'title'         => $restaurantData->name ?? null,
-                    'image'         => $restaurantData->image[0] ?? null,
+                    'images'         => $imagesString, // Now populated with the clean ImageGallery array!
                     'directions'    => $directions,
                     'mobile'        => $extractedData->mobile ?? $restaurantData->telephone ?? null,
                     'email'         => $extractedData->email ?? $restaurantData->email ?? null,
@@ -182,14 +324,12 @@ class WebScrapingService
                     'about'         => $restaurantData->description ?? null,
                     'tags'          => $tags,
                     'opening_hours' => $restaurantData->openingHoursSpecification ?? [],
-                    'menu'          => $menuImage
+                    'menu'          => $menuListFormatted
                 ]
             ];
+
         } catch (\Exception $e) {
-            return (object)[
-                'status' => 'error',
-                'message' => $e->getMessage()
-            ];
+            return (object)['status' => 'error', 'message' => $e->getMessage()];
         } finally {
             $client->quit();
         }
